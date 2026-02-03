@@ -906,10 +906,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             voice_path = tmp.name
 
         # Transcribe using mlx-whisper
+        # Use the dedicated mlx-whisper venv that has mlx_whisper installed
+        mlx_python = Path.home() / ".claude/mlx-whisper-mcp/.venv/bin/python"
         try:
             result = subprocess.run(
                 [
-                    "/opt/homebrew/bin/python3",
+                    str(mlx_python),
                     "-c",
                     f'''
 import mlx_whisper
