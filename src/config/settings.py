@@ -38,6 +38,9 @@ class Settings(BaseSettings):
 
     # Security
     approved_directory: Path = Field(..., description="Base directory for projects")
+    allowed_paths: Optional[List[Path]] = Field(
+        None, description="Additional allowed paths beyond approved_directory (e.g., eobsidian for groceries)"
+    )
     allowed_users: Optional[List[int]] = Field(
         None, description="Allowed Telegram user IDs"
     )
@@ -173,6 +176,31 @@ class Settings(BaseSettings):
         if not path.is_dir():
             raise ValueError(f"Approved directory is not a directory: {path}")
         return path  # type: ignore[no-any-return]
+
+    @field_validator("allowed_paths", mode="before")
+    @classmethod
+    def validate_allowed_paths(cls, v: Any) -> Optional[List[Path]]:
+        """Parse and validate additional allowed paths."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            # Parse JSON array or comma-separated list
+            v = v.strip()
+            if v.startswith("["):
+                import json
+                v = json.loads(v)
+            else:
+                v = [p.strip() for p in v.split(",") if p.strip()]
+
+        paths = []
+        for p in v:
+            path = Path(p).resolve() if isinstance(p, str) else p.resolve()
+            if not path.exists():
+                raise ValueError(f"Allowed path does not exist: {path}")
+            if not path.is_dir():
+                raise ValueError(f"Allowed path is not a directory: {path}")
+            paths.append(path)
+        return paths if paths else None
 
     @field_validator("mcp_config_path", mode="before")
     @classmethod

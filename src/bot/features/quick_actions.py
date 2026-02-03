@@ -122,20 +122,27 @@ class QuickActionManager:
         }
 
     async def get_suggestions(
-        self, session: SessionModel, limit: int = 6
+        self, session: SessionModel = None, limit: int = 6, session_data: Dict[str, Any] = None
     ) -> List[QuickAction]:
         """Get quick action suggestions based on session context.
 
         Args:
-            session: Current session
+            session: Current session (optional if session_data provided)
             limit: Maximum number of suggestions
+            session_data: Dict with working_directory and user_id (fallback)
 
         Returns:
             List of suggested actions
         """
         try:
-            # Analyze context
-            context = await self._analyze_context(session)
+            # Analyze context - use session or session_data
+            if session:
+                context = await self._analyze_context(session)
+            elif session_data:
+                # Fallback: analyze from session_data dict
+                context = await self._analyze_context_from_data(session_data)
+            else:
+                context = {"has_code": True}
 
             # Filter actions based on context
             available_actions = []
@@ -196,6 +203,52 @@ class QuickActionManager:
 
         # File-based context analysis could be added here
         # For now, we'll use heuristics based on session history
+
+        return context
+
+    async def _analyze_context_from_data(self, session_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze context from session_data dict (fallback when no SessionModel).
+
+        Args:
+            session_data: Dict with working_directory and user_id
+
+        Returns:
+            Context dictionary
+        """
+        import os
+        from pathlib import Path
+
+        context = {
+            "has_code": True,
+            "has_tests": False,
+            "has_package_manager": False,
+            "has_formatter": False,
+            "has_linter": False,
+            "has_dependencies": False,
+        }
+
+        working_dir = session_data.get("working_directory")
+        if working_dir and os.path.isdir(working_dir):
+            path = Path(working_dir)
+            files = [f.name for f in path.iterdir() if f.is_file()]
+            dirs = [d.name for d in path.iterdir() if d.is_dir()]
+
+            # Check for tests
+            if "tests" in dirs or "test" in dirs or any("test" in f for f in files):
+                context["has_tests"] = True
+
+            # Check for package managers
+            if "pyproject.toml" in files or "requirements.txt" in files:
+                context["has_package_manager"] = True
+                context["has_dependencies"] = True
+            if "package.json" in files:
+                context["has_package_manager"] = True
+                context["has_dependencies"] = True
+
+            # Check for formatters/linters
+            if "pyproject.toml" in files or ".flake8" in files or ".pylintrc" in files:
+                context["has_linter"] = True
+                context["has_formatter"] = True
 
         return context
 

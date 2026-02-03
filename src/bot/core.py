@@ -86,6 +86,9 @@ class ClaudeCodeBot:
             BotCommand("help", "Show available commands"),
             BotCommand("new", "Start new Claude session"),
             BotCommand("continue", "Continue last session"),
+            BotCommand("groceries", "📊 Quick grocery stats"),
+            BotCommand("calendar", "📅 Today's schedule"),
+            BotCommand("reminders", "✅ Pending reminders"),
             BotCommand("ls", "List files in current directory"),
             BotCommand("cd", "Change directory"),
             BotCommand("pwd", "Show current directory"),
@@ -102,6 +105,7 @@ class ClaudeCodeBot:
     def _register_handlers(self) -> None:
         """Register all command and message handlers."""
         from .handlers import callback, command, message
+        from .handlers import quick_commands
 
         # Command handlers
         handlers = [
@@ -118,6 +122,11 @@ class ClaudeCodeBot:
             ("export", command.export_session),
             ("actions", command.quick_actions),
             ("git", command.git_command),
+            # Quick commands (instant, no Claude)
+            ("groceries", quick_commands.groceries_command),
+            ("calendar", quick_commands.calendar_command),
+            ("reminders", quick_commands.reminders_command),
+            ("schedule", quick_commands.schedule_command),
         ]
 
         for cmd, handler in handlers:
@@ -141,6 +150,14 @@ class ClaudeCodeBot:
 
         self.app.add_handler(
             MessageHandler(filters.PHOTO, self._inject_deps(message.handle_photo)),
+            group=10,
+        )
+
+        # Voice message handler (transcribe + process)
+        self.app.add_handler(
+            MessageHandler(
+                filters.VOICE, self._inject_deps(message.handle_voice)
+            ),
             group=10,
         )
 

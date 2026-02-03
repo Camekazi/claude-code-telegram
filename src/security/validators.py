@@ -131,12 +131,19 @@ class SecurityValidator:
         r".*\.rar$",  # Archives (potentially dangerous)
     ]
 
-    def __init__(self, approved_directory: Path):
-        """Initialize validator with approved directory."""
+    def __init__(self, approved_directory: Path, allowed_paths: Optional[List[Path]] = None):
+        """Initialize validator with approved directory and optional allowlist.
+
+        Args:
+            approved_directory: Primary directory for projects (e.g., /Users/joppa/Projects)
+            allowed_paths: Additional allowed paths beyond approved_directory (e.g., eobsidian for groceries)
+        """
         self.approved_directory = approved_directory.resolve()
+        self.allowed_paths = [p.resolve() for p in (allowed_paths or [])]
         logger.info(
             "Security validator initialized",
             approved_directory=str(self.approved_directory),
+            allowed_paths=[str(p) for p in self.allowed_paths],
         )
 
     def validate_path(
@@ -181,15 +188,16 @@ class SecurityValidator:
             # Resolve path and check boundaries
             target = target.resolve()
 
-            # Ensure target is within approved directory
-            if not self._is_within_directory(target, self.approved_directory):
+            # Ensure target is within approved directory or allowed paths
+            if not self._is_path_allowed(target):
                 logger.warning(
                     "Path traversal attempt detected",
                     requested_path=user_path,
                     resolved_path=str(target),
                     approved_directory=str(self.approved_directory),
+                    allowed_paths=[str(p) for p in self.allowed_paths],
                 )
-                return False, None, "Access denied: path outside approved directory"
+                return False, None, "Access denied: path outside approved directories"
 
             logger.debug(
                 "Path validation successful",
@@ -209,6 +217,19 @@ class SecurityValidator:
             return True
         except ValueError:
             return False
+
+    def _is_path_allowed(self, path: Path) -> bool:
+        """Check if path is within approved directory or any allowed path."""
+        # Check approved directory first
+        if self._is_within_directory(path, self.approved_directory):
+            return True
+
+        # Check allowed paths
+        for allowed_path in self.allowed_paths:
+            if self._is_within_directory(path, allowed_path):
+                return True
+
+        return False
 
     def validate_filename(self, filename: str) -> Tuple[bool, Optional[str]]:
         """Validate uploaded filename.
@@ -375,6 +396,7 @@ class SecurityValidator:
         """Get summary of security validation rules."""
         return {
             "approved_directory": str(self.approved_directory),
+            "allowed_paths": [str(p) for p in self.allowed_paths],
             "allowed_extensions": sorted(list(self.ALLOWED_EXTENSIONS)),
             "forbidden_filenames": sorted(list(self.FORBIDDEN_FILENAMES)),
             "dangerous_patterns_count": len(self.DANGEROUS_PATTERNS),

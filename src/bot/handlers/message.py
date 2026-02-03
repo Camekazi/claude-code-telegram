@@ -879,3 +879,135 @@ def _update_working_directory_from_claude_response(
                     "Invalid path in Claude response", path=match, error=str(e)
                 )
                 continue
+
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle voice messages - transcribe and process with Claude."""
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    user_id = update.effective_user.id
+    settings: Settings = context.bot_data["settings"]
+
+    # Send processing indicator
+    progress_msg = await update.message.reply_text(
+        "🎤 Transcribing voice message...", parse_mode="Markdown"
+    )
+
+    try:
+        # Get voice file
+        voice = update.message.voice
+        voice_file = await context.bot.get_file(voice.file_id)
+
+        # Download to temp file
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            await voice_file.download_to_drive(tmp.name)
+            voice_path = tmp.name
+
+        # Transcribe using mlx-whisper
+        try:
+            result = subprocess.run(
+                [
+                    "/opt/homebrew/bin/python3",
+                    "-c",
+                    f'''
+import mlx_whisper
+result = mlx_whisper.transcribe("{voice_path}", path_or_hf_repo="mlx-community/whisper-large-v3-turbo")
+print(result["text"])
+'''
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode == 0:
+                transcription = result.stdout.strip()
+            else:
+                # Fallback: try simpler whisper
+                result = subprocess.run(
+                    ["whisper", voice_path, "--model", "base", "--output_format", "txt"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                transcription = result.stdout.strip() if result.returncode == 0 else None
+
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            transcription = None
+
+        # Clean up temp file
+        Path(voice_path).unlink(missing_ok=True)
+
+        if not transcription:
+            await progress_msg.edit_text(
+                "❌ **Transcription Failed**\n\n"
+                "Could not transcribe the voice message.\n"
+                "Try sending a text message instead.",
+                parse_mode="Markdown"
+            )
+            return
+
+        # Update progress
+        await progress_msg.edit_text(
+            f"🎤 **Transcribed:**\n_{transcription[:200]}{'...' if len(transcription) > 200 else ''}_\n\n"
+            "🤖 Processing with Claude...",
+            parse_mode="Markdown"
+        )
+
+        # Get Claude integration
+        claude_integration = context.bot_data.get("claude_integration")
+
+        if not claude_integration:
+            await progress_msg.edit_text(
+                f"🎤 **Transcribed:**\n_{transcription}_\n\n"
+                "❌ Claude integration not available.",
+                parse_mode="Markdown"
+            )
+            return
+
+        # Get current directory and session
+        current_dir = context.user_data.get(
+            "current_directory", settings.approved_directory
+        )
+        session_id = context.user_data.get("claude_session_id")
+
+        # Process with Claude
+        claude_response = await claude_integration.run_command(
+            prompt=transcription,
+            working_directory=current_dir,
+            user_id=user_id,
+            session_id=session_id,
+        )
+
+        # Update session ID
+        context.user_data["claude_session_id"] = claude_response.session_id
+
+        # Format and send response
+        from ..utils.formatting import ResponseFormatter
+
+        formatter = ResponseFormatter(settings)
+        formatted_messages = formatter.format_claude_response(claude_response.content)
+
+        # Delete progress message
+        await progress_msg.delete()
+
+        # Send responses
+        for i, message in enumerate(formatted_messages):
+            await update.message.reply_text(
+                message.text,
+                parse_mode=message.parse_mode,
+                reply_markup=message.reply_markup,
+                reply_to_message_id=update.message.message_id if i == 0 else None,
+            )
+
+            if i < len(formatted_messages) - 1:
+                await asyncio.sleep(0.5)
+
+    except Exception as e:
+        logger.error("Voice processing failed", error=str(e), user_id=user_id)
+        await progress_msg.edit_text(
+            f"❌ **Error processing voice**\n\n{str(e)}",
+            parse_mode="Markdown"
+        )
